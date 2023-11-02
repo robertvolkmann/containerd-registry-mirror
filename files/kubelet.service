@@ -1,0 +1,14 @@
+[Unit]
+Description=kubelet daemon
+Documentation=https://kubernetes.io/docs/admin/kubelet
+After=containerd.service
+
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+Restart=always
+RestartSec=5
+ExecStart=/usr/bin/kubelet \
+    --container-runtime-endpoint=unix:///run/containerd/containerd.sock \
+    --pod-manifest-path=/etc/kubernetes/manifests

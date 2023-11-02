@@ -1,0 +1,97 @@
+---
+- hosts: all
+  tasks:
+    - name: Add Kubernetes apt repository key
+      ansible.builtin.get_url:
+        url: https://pkgs.k8s.io/core:/stable:/v1.26/deb/Release.key
+        dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        mode: '0644'
+        force: true
+
+    - name: Add Kubernetes apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v1.26/deb/ /"
+        state: present
+        update_cache: true
+
+    - name: Install kubelet and containerd
+      ansible.builtin.package:
+        name:
+          - containerd
+          - kubelet
+        state: present
+
+    - name: Download crictl
+      ansible.builtin.get_url:
+        url: https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.26.1/crictl-v1.26.1-linux-amd64.tar.gz
+        dest: /tmp/crictl-v1.26.1.tar.gz
+        checksum: "sha256:0c1a0f9900c15ee7a55e757bcdc220faca5dd2e1cfc120459ad1f04f08598127"
+
+    - name: Install crictl
+      ansible.builtin.unarchive:
+        src: /tmp/crictl-v1.26.1.tar.gz
+        dest: /usr/local/bin
+        creates: /usr/local/bin/crictl
+        remote_src: yes
+
+    - name: Configure crictl
+      ansible.builtin.copy:
+        src: crictl.yaml
+        dest: /etc/crictl.yaml
+        mode: '0644'
+
+    - name: Configure registry config path for containerd
+      ansible.builtin.copy:
+        src: config.toml
+        dest: /etc/containerd/config.toml
+        mode: '0644'
+      notify: Restart containerd
+
+    - name: Create /etc/containerd/certs.d/quay.io
+      ansible.builtin.file:
+        path: /etc/containerd/certs.d/quay.io
+        state: directory
+        mode: '0755'
+      notify: Restart containerd
+
+    - name: Configure registry mirror for quay.io
+      ansible.builtin.copy:
+        src: hosts.toml
+        dest: /etc/containerd/certs.d/quay.io/hosts.toml
+        mode: '0644'
+      notify: Restart containerd
+
+    - name: Create registry configuration
+      ansible.builtin.copy:
+        src: registry-config.yaml
+        dest: /etc/registry.yaml
+        mode: '0644'
+      notify: Restart containerd
+
+    - name: Install kubelet service
+      ansible.builtin.copy:
+        src: kubelet.service
+        dest: /etc/systemd/system/kubelet.service
+
+    - name: Enable kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+        daemon_reload: true
+        state: started
+
+    - name: Deploy static pod {{ item }}
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: /etc/kubernetes/manifests/{{ item }}
+        mode: '0644'
+      loop:
+        - registry.yaml
+        - test.yaml
+      notify: Restart containerd
+
+  handlers:
+    - name: Restart containerd
+      ansible.builtin.service:
+        name: containerd
+        state: restarted
